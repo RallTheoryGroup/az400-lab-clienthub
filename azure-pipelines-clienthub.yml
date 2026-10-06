@@ -4,8 +4,8 @@ lockBehavior: sequential
 variables:
   webApp: clienthub-lab-z80b7
   resourceGroup: rg-ralltheory-digital
-  releaseVersion: '3.1.0'
-  previousVersion: '3.0.1'
+  releaseVersion: '3.2.0'
+  previousVersion: '3.1.0'
   appResourceGroup: rg-ralltheory-digital
   appServiceName: clienthub-lab-z80b7
   slotName: staging
