@@ -6,8 +6,6 @@ variables:
   resourceGroup: rg-ralltheory-digital
   releaseVersion: '2.0.0'
   previousVersion: '1.0.0'
-  sqlServer: sql-clienthub-lab-z80b7-cus.database.windows.net
-  sqlDatabase: clienthub-release-lab
 stages:
 - stage: Build
   jobs:
@@ -27,76 +25,8 @@ stages:
       workingDirectory: RallTheoryGroup/src/digital-services/clienthub/src/ClientHub
     - publish: $(Build.ArtifactStagingDirectory)/clienthub.zip
       artifact: clienthub-package
-- stage: ExpandDatabase
-  dependsOn: Build
-  jobs:
-  - deployment: ExpandClientSchema
-    pool:
-      vmImage: windows-latest
-    environment: clienthub-database-lab
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - task: AzureCLI@2
-            displayName: Wait for operator single-IP network route (lab preflight)
-            inputs:
-              azureSubscription: clienthub-db-wif
-              scriptType: pscore
-              scriptLocation: inlineScript
-              inlineScript: |
-                $ErrorActionPreference = 'Stop'
-                Get-Command Invoke-Sqlcmd -ErrorAction Stop | Out-Null
-                $deadline = (Get-Date).AddMinutes(15)
-                while ($true) {
-                  $token = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
-                  Write-Host "##vso[task.setsecret]$token"
-                  try {
-                    Invoke-Sqlcmd -ServerInstance "$(sqlServer)" -Database "$(sqlDatabase)" `
-                      -AccessToken $token -Query 'SELECT 1' -AbortOnError -QueryTimeout 30 | Out-Null
-                    Write-Host 'Database reachable'
-                    break
-                  } catch {
-                    $m = [regex]::Match($_.Exception.Message, "Client with IP address '([0-9.]+)'")
-                    if (-not $m.Success -or (Get-Date) -gt $deadline) { throw }
-                    $agentIp = $m.Groups[1].Value
-                    Write-Host "##vso[build.addbuildtag]sql-route-needed-$agentIp"
-                    Write-Host "##[warning]Waiting for operator firewall rule for agent IP $agentIp"
-                    Start-Sleep 30
-                  } finally {
-                    $token = $null
-                  }
-                }
-          - task: AzureCLI@2
-            inputs:
-              azureSubscription: clienthub-db-wif
-              scriptType: pscore
-              scriptLocation: inlineScript
-              inlineScript: |
-                $ErrorActionPreference = 'Stop'
-                Get-Command Invoke-Sqlcmd -ErrorAction Stop | Out-Null
-                $token = az account get-access-token --resource https://database.windows.net/ --query accessToken -o tsv
-                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($token)) {
-                  throw 'Unable to obtain database token.'
-                }
-                Write-Host "##vso[task.setsecret]$token"
-                $migration = @'
-                SET XACT_ABORT ON;
-                BEGIN TRANSACTION;
-                IF COL_LENGTH('release_lab.Customer', 'GivenName') IS NULL
-                    ALTER TABLE release_lab.Customer ADD GivenName nvarchar(100) NULL;
-                IF COL_LENGTH('release_lab.Customer', 'FamilyName') IS NULL
-                    ALTER TABLE release_lab.Customer ADD FamilyName nvarchar(100) NULL;
-                COMMIT;
-                '@
-                try {
-                  Invoke-Sqlcmd -ServerInstance "$(sqlServer)" -Database "$(sqlDatabase)" `
-                    -AccessToken $token -Query $migration -AbortOnError -QueryTimeout 60
-                } finally {
-                  $token = $null
-                }
 - stage: Stage
-  dependsOn: ExpandDatabase
+  dependsOn: Build
   jobs:
   - deployment: StageClientHub
     pool:
@@ -118,10 +48,18 @@ stages:
                 az webapp deploy --name "$(webApp)" --resource-group "$(resourceGroup)" \
                   --slot staging --src-path "$(Pipeline.Workspace)/clienthub-package/clienthub.zip" \
                   --type zip --output none
-                curl --fail --silent --show-error --retry 10 --retry-all-errors \
-                  --retry-delay 10 --max-time 20 "https://$(webApp)-staging.azurewebsites.net/health"
-                curl --fail --silent --show-error "https://$(webApp)-staging.azurewebsites.net/version" \
-                  | grep -F '"version":"$(releaseVersion)"'
+                for _ in $(seq 1 30); do
+                  if curl --fail --silent --show-error --max-time 20 \
+                       "https://$(webApp)-staging.azurewebsites.net/health" &&
+                     curl --fail --silent --show-error --max-time 20 \
+                       "https://$(webApp)-staging.azurewebsites.net/version" \
+                       | grep -F '"version":"$(releaseVersion)"'; then
+                    exit 0
+                  fi
+                  sleep 10
+                done
+                echo "Staging did not serve $(releaseVersion) after deployment." >&2
+                exit 1
 - stage: Promote
   dependsOn: Stage
   jobs:
