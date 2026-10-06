@@ -64,7 +64,7 @@ if (app.Configuration.GetValue<bool>("TelemetryLab:Enabled"))
 
     app.MapGet("/lab/dependency", async (bool fail = false) =>
     {
-        await Task.Delay(100);
+        await Task.Delay(600);
         return fail ? Results.StatusCode(503) : Results.Ok(new { status = "ok" });
     });
 
