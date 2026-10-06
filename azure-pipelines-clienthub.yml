@@ -1,0 +1,92 @@
+trigger: none
+pr: none
+lockBehavior: sequential
+variables:
+  webApp: clienthub-lab-z80b7
+  resourceGroup: rg-ralltheory-digital
+  releaseVersion: '2.0.0'
+  previousVersion: '1.0.0'
+stages:
+- stage: Build
+  jobs:
+  - job: Package
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: sdk
+        version: '8.0.x'
+    - bash: |
+        set -euo pipefail
+        dotnet publish -c Release -p:Version="$(releaseVersion)" -o publish
+        cd publish
+        zip -qr "$(Build.ArtifactStagingDirectory)/clienthub.zip" .
+      workingDirectory: RallTheoryGroup/src/digital-services/clienthub/src/ClientHub
+    - publish: $(Build.ArtifactStagingDirectory)/clienthub.zip
+      artifact: clienthub-package
+- stage: Stage
+  dependsOn: Build
+  jobs:
+  - deployment: StageClientHub
+    pool:
+      vmImage: ubuntu-latest
+    environment: clienthub-staging
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: clienthub-package
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: clienthub-wif
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                az webapp deploy --name "$(webApp)" --resource-group "$(resourceGroup)" \
+                  --slot staging --src-path "$(Pipeline.Workspace)/clienthub-package/clienthub.zip" \
+                  --type zip --output none
+                curl --fail --silent --show-error --retry 10 --retry-all-errors \
+                  --retry-delay 10 --max-time 20 "https://$(webApp)-staging.azurewebsites.net/health"
+                curl --fail --silent --show-error "https://$(webApp)-staging.azurewebsites.net/version" \
+                  | grep -F '"version":"$(releaseVersion)"'
+- stage: Promote
+  dependsOn: Stage
+  jobs:
+  - deployment: PromoteClientHub
+    pool:
+      vmImage: ubuntu-latest
+    environment: clienthub-production
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: clienthub-wif
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                curl --fail --silent --show-error "https://$(webApp).azurewebsites.net/version" \
+                  | grep -F '"version":"$(previousVersion)"'
+                curl --fail --silent --show-error "https://$(webApp)-staging.azurewebsites.net/version" \
+                  | grep -F '"version":"$(releaseVersion)"'
+                az webapp traffic-routing set --name "$(webApp)" --resource-group "$(resourceGroup)" \
+                  --distribution staging=0 --output none
+                az webapp deployment slot swap --name "$(webApp)" --resource-group "$(resourceGroup)" \
+                  --slot staging --target-slot production --output none
+                if curl --fail --silent --show-error --retry 10 --retry-all-errors \
+                    --retry-delay 10 --max-time 20 "https://$(webApp).azurewebsites.net/health" &&
+                   curl --fail --silent --show-error "https://$(webApp).azurewebsites.net/version" \
+                    | grep -F '"version":"$(releaseVersion)"'; then
+                  echo "Candidate verified"
+                else
+                  az webapp deployment slot swap --name "$(webApp)" --resource-group "$(resourceGroup)" \
+                    --slot staging --target-slot production --output none
+                  curl --fail --silent --show-error "https://$(webApp).azurewebsites.net/version" \
+                    | grep -F '"version":"$(previousVersion)"'
+                  exit 1
+                fi
