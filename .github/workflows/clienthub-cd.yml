@@ -92,8 +92,49 @@ jobs:
             --url "https://management.azure.com${AI_ID}/Annotations?api-version=2015-05-01" \
             --body "$body" --output none
 
-  promote:
+  candidate-health:
     needs: stage
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AI_NAME: ai-ralltheory-qwh5vxpgarqhg
+      MONITOR_RG: rg-ralltheory-shared
+      CANDIDATE_HOST: clienthub-lab-z80b7-staging.azurewebsites.net
+    steps:
+      - name: Observation period (generate candidate traffic now)
+        run: sleep 900
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Check candidate checkout health
+        run: |
+          set -euo pipefail
+          az extension add --name application-insights --only-show-errors
+          pass=$(az monitor app-insights query \
+            --app "$AI_NAME" --resource-group "$MONITOR_RG" \
+            --analytics-query "
+              requests
+              | where timestamp between (ago(12m) .. ago(2m))
+              | where url contains '/lab/checkout'
+              | where tostring(parse_url(url).Host) =~ '$CANDIDATE_HOST'
+              | summarize Total=sum(itemCount),
+                          Failed=sumif(itemCount, success == false),
+                          P95Ms=percentile(duration,95)
+              | extend Pass=Total >= 20 and Failed == 0 and P95Ms < 1000
+              | project Pass" \
+            --query 'tables[0].rows[0][0]' -o tsv)
+          if [ "$pass" != "true" ] && [ "$pass" != "True" ]; then
+            echo "Candidate unhealthy, insufficient data, or unexpected response; promotion blocked."
+            exit 1
+          fi
+
+  promote:
+    needs: candidate-health
     runs-on: ubuntu-latest
     environment: production
     permissions:

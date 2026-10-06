@@ -9,6 +9,9 @@ variables:
   appResourceGroup: rg-ralltheory-digital
   appServiceName: clienthub-lab-z80b7
   slotName: staging
+  appInsightsName: ai-ralltheory-qwh5vxpgarqhg
+  monitorResourceGroup: rg-ralltheory-shared
+  candidateHost: clienthub-lab-z80b7-staging.azurewebsites.net
   # appInsightsResourceId is defined in the pipeline settings (keeps the subscription ID out of this public repo).
 stages:
 - stage: Build
@@ -98,8 +101,52 @@ stages:
               AI_ID: $(appInsightsResourceId)
               BUILD_ID: $(Build.BuildId)
               COMMIT: $(Build.SourceVersion)
-- stage: Promote
+- stage: CandidateHealth
   dependsOn: Stage
+  condition: succeeded()
+  jobs:
+  - job: ObserveCandidate
+    pool: server
+    steps:
+    - task: Delay@1
+      displayName: Observation period (generate candidate traffic now)
+      inputs:
+        delayForMinutes: '15'
+  - job: CheckCandidateHealth
+    dependsOn: ObserveCandidate
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - checkout: none
+    - task: AzureCLI@2
+      displayName: Check candidate checkout health
+      inputs:
+        azureSubscription: clienthub-wif
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          set -euo pipefail
+          az extension add --name application-insights --only-show-errors
+          pass=$(az monitor app-insights query \
+            --app "$(appInsightsName)" --resource-group "$(monitorResourceGroup)" \
+            --analytics-query '
+              requests
+              | where timestamp between (ago(12m) .. ago(2m))
+              | where url contains "/lab/checkout"
+              | where tostring(parse_url(url).Host) =~ "$(candidateHost)"
+              | summarize Total=sum(itemCount),
+                          Failed=sumif(itemCount, success == false),
+                          P95Ms=percentile(duration,95)
+              | extend Pass=Total >= 20 and Failed == 0 and P95Ms < 1000
+              | project Pass' \
+            --query 'tables[0].rows[0][0]' -o tsv)
+          if [ "$pass" != "true" ] && [ "$pass" != "True" ]; then
+            echo "Candidate unhealthy, insufficient data, or unexpected response; promotion blocked."
+            exit 1
+          fi
+- stage: Promote
+  dependsOn: CandidateHealth
+  condition: succeeded()
   jobs:
   - deployment: PromoteClientHub
     pool:
