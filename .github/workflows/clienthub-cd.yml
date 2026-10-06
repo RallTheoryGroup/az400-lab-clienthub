@@ -85,7 +85,7 @@ jobs:
           curl --fail --silent --show-error --retry 10 --retry-all-errors \
             --retry-delay 10 --max-time 20 "https://${WEBAPP}.azurewebsites.net/health"
           curl --fail --silent --show-error "https://${WEBAPP}.azurewebsites.net/version" \
-            | grep -F "\"version\":\"${RELEASE_VERSION}\""
+            | grep -F "\"version\":\"${RELEASE_VERSION}-injected\""
       - name: Restore baseline after confirmed swap
         if: ${{ failure() && steps.swap.outcome == 'success' }}
         run: |
