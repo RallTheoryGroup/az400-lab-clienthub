@@ -9,8 +9,8 @@ concurrency:
 env:
   WEBAPP: clienthub-lab-z80b7
   RG: rg-ralltheory-digital
-  RELEASE_VERSION: '3.0.0'
-  PREVIOUS_VERSION: '2.0.0'
+  RELEASE_VERSION: '3.0.1'
+  PREVIOUS_VERSION: '3.0.0'
 jobs:
   build:
     runs-on: ubuntu-latest
