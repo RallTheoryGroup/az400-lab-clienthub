@@ -59,7 +59,9 @@ stages:
                   } catch {
                     $m = [regex]::Match($_.Exception.Message, "Client with IP address '([0-9.]+)'")
                     if (-not $m.Success -or (Get-Date) -gt $deadline) { throw }
-                    Write-Host "##[warning]Waiting for operator firewall rule for agent IP $($m.Groups[1].Value)"
+                    $agentIp = $m.Groups[1].Value
+                    Write-Host "##vso[build.addbuildtag]sql-route-needed-$agentIp"
+                    Write-Host "##[warning]Waiting for operator firewall rule for agent IP $agentIp"
                     Start-Sleep 30
                   } finally {
                     $token = $null
