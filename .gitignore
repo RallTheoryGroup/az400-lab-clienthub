@@ -1,0 +1,36 @@
+# ─── Secrets / local environment ──────────────────────────────────────────
+# Service principal credentials, tenant info, and any other env-style files
+.azure/**/.env
+**/*.env
+*.pem
+*.key
+
+# ─── PowerShell / .NET / Node build output ────────────────────────────────
+bin/
+obj/
+node_modules/
+dist/
+out/
+*.log
+
+# ─── IDE / OS ─────────────────────────────────────────────────────────────
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# ─── Python ───────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# ─── Terraform ────────────────────────────────────────────────────────────
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+!example.tfvars
