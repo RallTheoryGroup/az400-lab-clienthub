@@ -5,6 +5,10 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.AddHealthChecks();
+builder.Services.AddApplicationInsightsTelemetry(options =>
+{
+    options.EnableAdaptiveSampling = true;
+});
 
 var endpoint = builder.Configuration["Endpoints:AppConfiguration"]
     ?? throw new InvalidOperationException("App Configuration endpoint is required.");
