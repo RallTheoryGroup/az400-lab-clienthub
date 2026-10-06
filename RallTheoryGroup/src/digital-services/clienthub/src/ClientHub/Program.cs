@@ -1,11 +1,21 @@
+using Azure.Identity;
+using Microsoft.FeatureManagement;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.AddHealthChecks();
 
-var app = builder.Build();
+var endpoint = builder.Configuration["Endpoints:AppConfiguration"]
+    ?? throw new InvalidOperationException("App Configuration endpoint is required.");
+builder.Configuration.AddAzureAppConfiguration(options =>
+    options.Connect(new Uri(endpoint), new DefaultAzureCredential())
+        .UseFeatureFlags(flags => flags.SetRefreshInterval(TimeSpan.FromSeconds(30))));
+builder.Services.AddAzureAppConfiguration();
+builder.Services.AddFeatureManagement();
 
+var app = builder.Build();
+app.UseAzureAppConfiguration();
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
@@ -34,5 +44,12 @@ app.MapGet("/version", () => Results.Ok(new
         .Cast<System.Reflection.AssemblyInformationalVersionAttribute>()
         .Single().InformationalVersion.Split('+')[0]
 }));
+
+app.MapGet("/feature-demo", async (IFeatureManager features) =>
+    Results.Ok(new
+    {
+        experience = await features.IsEnabledAsync("EnhancedClientSummary")
+            ? "enhanced" : "standard"
+    }));
 
 app.Run();
