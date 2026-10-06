@@ -6,6 +6,10 @@ variables:
   resourceGroup: rg-ralltheory-digital
   releaseVersion: '3.1.0'
   previousVersion: '3.0.1'
+  appResourceGroup: rg-ralltheory-digital
+  appServiceName: clienthub-lab-z80b7
+  slotName: staging
+  # appInsightsResourceId is defined in the pipeline settings (keeps the subscription ID out of this public repo).
 stages:
 - stage: Build
   jobs:
@@ -60,6 +64,40 @@ stages:
                 done
                 echo "Staging did not serve $(releaseVersion) after deployment." >&2
                 exit 1
+          - task: AzureCLI@2
+            displayName: Verify deployed ClientHub and record release
+            inputs:
+              azureSubscription: clienthub-wif
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                host=$(az webapp show -g "$APP_RG" -n "$APP_NAME" --slot "$SLOT" --query defaultHostName -o tsv)
+                healthy=false
+                for attempt in 1 2 3 4 5; do
+                  if curl --fail --silent --show-error --max-time 10 "https://$host/health"; then
+                    healthy=true
+                    break
+                  fi
+                  sleep 10
+                done
+                [ "$healthy" = true ] || { echo "Deployment health check failed"; exit 1; }
+                annotation_id=$(python -c 'import uuid; print(uuid.uuid4())')
+                timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                properties=$(jq -nc --arg build "$BUILD_ID" --arg commit "$COMMIT" --arg slot "$SLOT" \
+                  '{BuildId:$build,Commit:$commit,Slot:$slot}')
+                body=$(jq -nc --arg id "$annotation_id" --arg time "$timestamp" --arg props "$properties" \
+                  '{Id:$id,AnnotationName:"ClientHub deployment",EventTime:$time,Category:"Deployment",Properties:$props}')
+                az rest --method put \
+                  --url "https://management.azure.com${AI_ID}/Annotations?api-version=2015-05-01" \
+                  --body "$body" --output none
+            env:
+              APP_RG: $(appResourceGroup)
+              APP_NAME: $(appServiceName)
+              SLOT: $(slotName)
+              AI_ID: $(appInsightsResourceId)
+              BUILD_ID: $(Build.BuildId)
+              COMMIT: $(Build.SourceVersion)
 - stage: Promote
   dependsOn: Stage
   jobs:
