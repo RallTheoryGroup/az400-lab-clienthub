@@ -4,8 +4,8 @@ lockBehavior: sequential
 variables:
   webApp: clienthub-lab-z80b7
   resourceGroup: rg-ralltheory-digital
-  releaseVersion: '2.0.0'
-  previousVersion: '1.0.0'
+  releaseVersion: '3.1.0'
+  previousVersion: '3.0.1'
 stages:
 - stage: Build
   jobs:
